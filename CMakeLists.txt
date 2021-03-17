@@ -14,8 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# TODO: remove after debugging
+include( CMakePrintHelpers )
+
 cmake_minimum_required ( VERSION 2.8 )
 project ( columnar )
+SET ( columnar_CMAKE_DIR "${columnar_SOURCE_DIR}/cmake" )
+SET ( CMAKE_MODULE_PATH "${columnar_SOURCE_DIR}/cmake" )
+
+# TODO: REMOVE
+cmake_print_variables(columnar_CMAKE_DIR columnar_SOURCE_DIR CMAKE_MODULE_PATH)
 
 set ( GCC_OR_CLANG 0 )
 
@@ -103,3 +111,16 @@ add_custom_target ( columnarver COMMAND ${CMAKE_COMMAND} -D SOURCE_DIR=${CMAKE_C
 	COMMENT "Generate version from sources" VERBATIM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake ${CMAKE_CURRENT_SOURCE_DIR}/util/version.h.in )
 
 add_dependencies ( columnar columnarver )
+
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackOptions.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions.cmake" @ONLY)
+
+set ( CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions.cmake" )
+include ( CPack )
+include ( SetBuildType )
+
+set ( CPACK_COMPONENT_COLUMNAR_DISPLAY_NAME "Manticore Columnar Library" )
+cpack_add_component( columnar )
+
+# TODO REMOVE
+message( STATUS "!!!!!!!!!!!!!!!!!!!!!!!" )
+cmake_print_variables( CPACK_GENERATOR )
