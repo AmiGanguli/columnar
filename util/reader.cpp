@@ -16,6 +16,7 @@
 
 #include "reader.h"
 #include "assert.h"
+#include <errno.h>
 
 #ifdef _MSC_VER
 	#define WIN32_LEAN_AND_MEAN
