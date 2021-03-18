@@ -29,7 +29,7 @@ set_target_properties ( columnar PROPERTIES OUTPUT_NAME _manticore_columnar VERS
 install ( TARGETS columnar LIBRARY DESTINATION ${BINPREFIX}/lib/ COMPONENT columnar ) # adds lib file and a chain of version symlinks to it
 
 # dependencies will be auto calculated. FIXME! M.b. point them directly?
-set ( CPACK_DEBIAN_COLUMNAR_PACKAGE_DEPENDS "manticore (>= 3.5.5)" )
+set ( CPACK_DEBIAN_PACKAGE_DEPENDS "manticore (>= 3.5.5)|manticore-server (>= 3.5.5)" )
 set ( CPACK_DEBIAN_PACKAGE_SHLIBDEPS "ON" )
 set ( CPACK_DEBIAN_PACKAGE_SECTION "misc" )
 set ( CPACK_DEBIAN_PACKAGE_PRIORITY "optional" )
