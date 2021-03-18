@@ -18,12 +18,10 @@
 include( CMakePrintHelpers )
 
 cmake_minimum_required ( VERSION 2.8 )
+
 project ( columnar )
 SET ( columnar_CMAKE_DIR "${columnar_SOURCE_DIR}/cmake" )
 SET ( CMAKE_MODULE_PATH "${columnar_SOURCE_DIR}/cmake" )
-
-# TODO: REMOVE
-cmake_print_variables(columnar_CMAKE_DIR columnar_SOURCE_DIR CMAKE_MODULE_PATH)
 
 set ( GCC_OR_CLANG 0 )
 
@@ -107,20 +105,54 @@ if (DEFINED COLUMNAR_DEST)
 	endif ()
 endif ()
 
-add_custom_target ( columnarver COMMAND ${CMAKE_COMMAND} -D SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -D BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR} -P ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake
-	COMMENT "Generate version from sources" VERBATIM SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake ${CMAKE_CURRENT_SOURCE_DIR}/util/version.h.in )
+# --------------- related with packaging -------------------
+
+set ( PACKAGE_NAME "manticore_columnar_lib" )
+set ( COMPANY_NAME "Manticore Software LTD" )
+
+add_custom_target (
+		columnarver 
+		COMMAND ${CMAKE_COMMAND} 
+			-D SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} 
+			-D BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR} 
+                        -D DISTR_SUFFIX=${DISTR_SUFFIX}
+                        -D PACKAGE_NAME=${PACKAGE_NAME}
+			-P ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake
+		COMMENT "Generate version from sources" 
+		VERBATIM 
+		SOURCES 
+			${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake 
+			${CMAKE_CURRENT_SOURCE_DIR}/util/version.h.in 
+                        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackOptions.cmake.in
+)
+include_directories ( "${CMAKE_CURRENT_BINARY_DIR}/config" )
+#add_definitions ( "-DBUILD_WITH_CMAKE" )
 
 add_dependencies ( columnar columnarver )
 
-configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackOptions.cmake.in" "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions.cmake" @ONLY)
+# getting library version from version.h.in
+include( GetVersion )
+get_library_version( VERSION_STR "${CMAKE_CURRENT_SOURCE_DIR}/util/version.h.in" )
 
-set ( CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions.cmake" )
-include ( CPack )
 include ( SetBuildType )
 
+configure_file ( "LICENSE" "${CMAKE_CURRENT_BINARY_DIR}/LICENSE" COPYONLY )
+
+set ( CPACK_SOURCE_IGNORE_FILES "/\\\\.idea/" "/\\\\.git/"
+                "/\\\\.svn/" "/autom4te\\\\.cache/" "/bin/" "/junk/" "/win/" "/gmock/" "/gtest/" "/libtest"   "/pkgconfig/"
+                ".swp$" ".orig$" ".log$" ".deps/" )
+set ( CPACK_SOURCE_GENERATOR TGZ )
+set ( CPACK_PACKAGE_NAME "${PACKAGE_NAME}" )
+set ( CPACK_PACKAGE_CONTACT "Manticore Team <build@manticoresearch.com>" )
+set ( CMAKE_PROJECT_HOMEPAGE_URL "https://github.com/manticoresoftware/columnar/" )
+set ( CPACK_PACKAGE_VENDOR "${COMPANY_NAME}" )
+set ( CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE" )
+set ( CPACK_PACKAGE_DESCRIPTION_SUMMARY "Manticore Columnar Library")
+set ( CPACK_COMPONENT_COLUMNAR_DESCRIPTION "Manticore Columnar Library" )
 set ( CPACK_COMPONENT_COLUMNAR_DISPLAY_NAME "Manticore Columnar Library" )
+set ( CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions.cmake" )
+set ( CPACK_COMPONENT_COLUMNAR_DISPLAY_NAME "Columnar display name" )
+
+include ( CPack )
 cpack_add_component( columnar )
 
-# TODO REMOVE
-message( STATUS "!!!!!!!!!!!!!!!!!!!!!!!" )
-cmake_print_variables( CPACK_GENERATOR )
