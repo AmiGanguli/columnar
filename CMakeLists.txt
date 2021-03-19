@@ -107,7 +107,7 @@ endif ()
 
 # --------------- related with packaging -------------------
 
-set ( PACKAGE_NAME "manticore_columnar_lib" )
+set ( PACKAGE_NAME "manticore-columnar-lib" )
 set ( COMPANY_NAME "Manticore Software LTD" )
 
 add_custom_target (
@@ -147,12 +147,12 @@ set ( CPACK_PACKAGE_CONTACT "Manticore Team <build@manticoresearch.com>" )
 set ( CMAKE_PROJECT_HOMEPAGE_URL "https://github.com/manticoresoftware/columnar/" )
 set ( CPACK_PACKAGE_VENDOR "${COMPANY_NAME}" )
 set ( CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_BINARY_DIR}/LICENSE" )
-set ( CPACK_PACKAGE_DESCRIPTION_SUMMARY "Manticore Columnar Library")
-set ( CPACK_COMPONENT_COLUMNAR_DESCRIPTION "Manticore Columnar Library" )
-set ( CPACK_COMPONENT_COLUMNAR_DISPLAY_NAME "Manticore Columnar Library" )
+set ( CPACK_PACKAGE_DESCRIPTION_SUMMARY "Manticore Columnar Library is a column-oriented storage library, aiming to provide decent performance with low memory footprint at big data volume")
+set ( CPACK_PACKAGE_DESCRIPTION "Manticore Columnar Library is a column-oriented storage library, aiming to provide decent performance with low memory footprint at big data volume. When used in combination with Manticore Search can be beneficial for faster / lower resource consumption log/metrics analytics and running log / metric analytics in docker / kubernetes")
+set ( CPACK_RPM_PACKAGE_DESCRIPTION "${CPACK_PACKAGE_DESCRIPTION}" ) # the description will default to the default one (This is an installer created using CPack..." otherwise, i.e. it doesn't take CPACK_PACKAGE_DESCRIPTION as a default 
 set ( CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions.cmake" )
-set ( CPACK_COMPONENT_COLUMNAR_DISPLAY_NAME "Columnar display name" )
 
 include ( CPack )
 cpack_add_component( columnar )
+
 
