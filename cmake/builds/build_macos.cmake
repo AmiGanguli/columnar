@@ -3,14 +3,13 @@
 # rules to build tgz archive for Mac OS X
 
 message ( STATUS "Will create TGZ with build for Mac Os X" )
-set ( SPLIT_SYMBOLS 1 )
 
 # configure specific stuff
 set ( CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -arch x86_64" )
 set ( CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -arch x86_64" )
 
 set_target_properties ( columnar PROPERTIES OUTPUT_NAME _manticore_columnar VERSION "${VERSION_STR}" SOVERSION 1 )
-install ( TARGETS columnar LIBRARY DESTINATION ${BINPREFIX}/lib/ COMPONENT columnar ) # adds lib file and a chain of version symlinks to it
+install ( TARGETS columnar LIBRARY DESTINATION "lib" COMPONENT columnar ) # adds lib file and a chain of version symlinks to it
 
 # package specific
 

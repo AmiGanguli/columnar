@@ -109,26 +109,8 @@ endif ()
 
 set ( PACKAGE_NAME "manticore-columnar-lib" )
 set ( COMPANY_NAME "Manticore Software LTD" )
-
-add_custom_target (
-		columnarver 
-		COMMAND ${CMAKE_COMMAND} 
-			-D SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} 
-			-D BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR} 
-                        -D DISTR_SUFFIX=${DISTR_SUFFIX}
-                        -D PACKAGE_NAME=${PACKAGE_NAME}
-			-P ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake
-		COMMENT "Generate version from sources" 
-		VERBATIM 
-		SOURCES 
-			${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake 
-			${CMAKE_CURRENT_SOURCE_DIR}/util/version.h.in 
-                        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackOptions.cmake.in
-)
-include_directories ( "${CMAKE_CURRENT_BINARY_DIR}/config" )
-#add_definitions ( "-DBUILD_WITH_CMAKE" )
-
-add_dependencies ( columnar columnarver )
+set ( BUILD_TAG "" CACHE STRING "The tag which will be added to build" )
+set ( PKGSUFFIXES ) # list of suffixes which will be append to package name, will be '-'-separated and added to package file name along with DISTR_SUFFIX
 
 # getting library version from version.h.in
 include( GetVersion )
@@ -155,4 +137,35 @@ set ( CPACK_PROJECT_CONFIG_FILE "${CMAKE_CURRENT_BINARY_DIR}/config/CPackOptions
 include ( CPack )
 cpack_add_component( columnar )
 
+if ( WIN32 )
+        IF ( CMAKE_EXE_LINKER_FLAGS MATCHES "x64" )
+                LIST ( APPEND PKGSUFFIXES "x64" )
+        else ()
+                LIST ( APPEND PKGSUFFIXES "win32" )
+        endif ()
+endif ()
 
+set ( CPACK_SUFFIX "" )
+FOREACH ( SUFFIX ${PKGSUFFIXES} )
+        set ( CPACK_SUFFIX "${CPACK_SUFFIX}-${SUFFIX}" )
+endforeach ()
+
+add_custom_target (
+                columnarver
+                COMMAND ${CMAKE_COMMAND}
+                        -D SOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+                        -D BINARY_DIR=${CMAKE_CURRENT_BINARY_DIR}
+                        -D BUILD_TAG=${BUILD_TAG}
+                        -D DISTR_SUFFIX=${DISTR_SUFFIX}
+                        -D PACKAGE_NAME=${PACKAGE_NAME}
+                        -D CPACK_SUFFIX=${CPACK_SUFFIX}
+                        -P ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake
+                COMMENT "Generate version from sources"
+                VERBATIM
+                SOURCES
+                        ${CMAKE_CURRENT_SOURCE_DIR}/rev.cmake
+                        ${CMAKE_CURRENT_SOURCE_DIR}/util/version.h.in
+                        ${CMAKE_CURRENT_SOURCE_DIR}/cmake/CPackOptions.cmake.in
+)
+
+add_dependencies ( columnar columnarver )
