@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _attributeheader_
-#define _attributeheader_
+#pragma once
 
 #include "columnar.h"
 
@@ -42,14 +41,11 @@ public:
 	virtual int					GetNumMinMaxBlocks ( int iLevel ) const = 0;
 	virtual std::pair<int64_t,int64_t> GetMinMax ( int iLevel, int iBlock ) const = 0;
 
-	virtual bool				HaveStringHashes() const = 0;
-
 	virtual bool				Load ( FileReader_c & tReader, std::string & sError ) = 0;
+	virtual bool				Check ( FileReader_c & tReader, Reporter_fn & fnError ) = 0;
 };
 
 
 AttributeHeader_i * CreateAttributeHeader ( AttrType_e eType, uint32_t uTotalDocs, std::string & sError );
 
 } // namespace columnar
-
-#endif // _attributeheader_

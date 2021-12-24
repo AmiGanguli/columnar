@@ -20,6 +20,7 @@
 #include "accessorint.h"
 #include "accessorstr.h"
 #include "accessormva.h"
+#include "check.h"
 #include "reader.h"
 
 #include <unordered_map>
@@ -30,10 +31,11 @@ namespace columnar
 
 using HeaderWithLocator_t = std::pair<const AttributeHeader_i*, int>;
 
-class MinMaxEval_c
+template <bool ROWID_LIMITS>
+class MinMaxEval_T
 {
 public:
-			MinMaxEval_c ( const std::vector<HeaderWithLocator_t> & dHeaders, const BlockTester_i & tBlockTester, SharedBlocks_c & pMatchingBlocks );
+			MinMaxEval_T ( const std::vector<HeaderWithLocator_t> & dHeaders, const BlockTester_i & tBlockTester, SharedBlocks_c & pMatchingBlocks, uint32_t uMinRowID, uint32_t uMaxRowID );
 
 	void	Eval();
 	bool	EvalAll();
@@ -46,37 +48,47 @@ private:
 	std::vector<int>		m_dBlocksOnLevel;
 	MinMaxVec_t				m_dMinMax;
 	int						m_iNumLevels = 0;
+	int						m_iMinMaxLeafShift = 0;
+	uint32_t				m_uMinRowID = 0;
+	uint32_t				m_uMaxRowID = INVALID_ROW_ID;
 
 	void					DoEval ( int iLevel, int iBlock );
 	void					ResizeMinMax();
 	FORCE_INLINE bool		FillMinMax ( int iLevel, int iBlock );
+	FORCE_INLINE uint32_t	MinMaxBlockId2RowId ( int iBlockId ) const;
+	FORCE_INLINE uint32_t	MinMaxBlockId2RowId ( int iBlockId, int iLevel ) const;
+	FORCE_INLINE bool		RangesOverlap ( uint32_t uMin, uint32_t uMax ) const;
 };
 
-
-MinMaxEval_c::MinMaxEval_c ( const std::vector<HeaderWithLocator_t> & dHeaders, const BlockTester_i & tBlockTester, SharedBlocks_c & pMatchingBlocks )
+template <bool ROWID_LIMITS>
+MinMaxEval_T<ROWID_LIMITS>::MinMaxEval_T ( const std::vector<HeaderWithLocator_t> & dHeaders, const BlockTester_i & tBlockTester, SharedBlocks_c & pMatchingBlocks, uint32_t uMinRowID, uint32_t uMaxRowID )
 	: m_dHeaders ( dHeaders )
 	, m_tBlockTester ( tBlockTester )
 	, m_pMatchingBlocks ( pMatchingBlocks )
+	, m_uMinRowID ( uMinRowID )
+	, m_uMaxRowID ( uMaxRowID )
 {
 	assert ( !dHeaders.empty() );
 
 	// do this to avoid multiple vcalls when evaluating
 	m_iNumLevels = m_dHeaders[0].first->GetNumMinMaxLevels();
+	m_iMinMaxLeafShift = CalcNumBits ( m_dHeaders[0].first->GetSettings().m_iSubblockSize ) - 1;
+
 	m_dBlocksOnLevel.resize(m_iNumLevels);
 
 	for ( size_t i=0; i <m_dBlocksOnLevel.size(); i++ )
 		m_dBlocksOnLevel[i] = m_dHeaders[0].first->GetNumMinMaxBlocks ( (int)i );
 }
 
-
-void MinMaxEval_c::Eval()
+template <bool ROWID_LIMITS>
+void MinMaxEval_T<ROWID_LIMITS>::Eval()
 {
 	ResizeMinMax();
 	DoEval ( 0, 0 );
 }
 
-
-bool MinMaxEval_c::EvalAll()
+template <bool ROWID_LIMITS>
+bool MinMaxEval_T<ROWID_LIMITS>::EvalAll()
 {
 	ResizeMinMax();
 	if ( !FillMinMax ( 0, 0 ) )
@@ -85,8 +97,14 @@ bool MinMaxEval_c::EvalAll()
 	return m_tBlockTester.Test(m_dMinMax);
 }
 
+template <bool ROWID_LIMITS>
+bool MinMaxEval_T<ROWID_LIMITS>::RangesOverlap ( uint32_t uMin, uint32_t uMax ) const
+{
+	return uMin<=m_uMaxRowID && uMax>=m_uMinRowID;
+}
 
-void MinMaxEval_c::DoEval ( int iLevel, int iBlock )
+template <bool ROWID_LIMITS>
+void MinMaxEval_T<ROWID_LIMITS>::DoEval ( int iLevel, int iBlock )
 {
 	if ( !FillMinMax ( iLevel, iBlock ) )
 		return;
@@ -94,19 +112,47 @@ void MinMaxEval_c::DoEval ( int iLevel, int iBlock )
 	if ( m_tBlockTester.Test ( m_dMinMax ) )
 	{
 		if ( iLevel==m_iNumLevels-1 )
-			m_pMatchingBlocks->Add(iBlock);
+		{
+			if ( ROWID_LIMITS )
+			{
+				uint32_t uMinBlockRowID = MinMaxBlockId2RowId(iBlock);
+				uint32_t uMaxBlockRowID = MinMaxBlockId2RowId(iBlock+1) - 1;
+
+				if ( RangesOverlap ( uMinBlockRowID, uMaxBlockRowID ) )
+					m_pMatchingBlocks->Add(iBlock);
+			}
+			else
+				m_pMatchingBlocks->Add(iBlock);
+		}
 		else
 		{
 			int iLeftBlock = iBlock<<1;
 			int iRightBlock = iLeftBlock+1;
-			DoEval ( iLevel+1, iLeftBlock );
-			DoEval ( iLevel+1, iRightBlock );
+
+			if ( ROWID_LIMITS )
+			{
+				uint32_t uMinLeftBlockRowID = MinMaxBlockId2RowId ( iLeftBlock, iLevel+1 );
+				uint32_t uMaxLeftBlockRowID = MinMaxBlockId2RowId ( iLeftBlock+1, iLevel+1 ) - 1;
+				uint32_t uMinRightBlockRowID = MinMaxBlockId2RowId ( iRightBlock, iLevel+1 );
+				uint32_t uMaxRightBlockRowID = MinMaxBlockId2RowId ( iRightBlock+1, iLevel+1 ) - 1;
+
+				if ( RangesOverlap ( uMinLeftBlockRowID, uMaxLeftBlockRowID ) )
+					DoEval ( iLevel+1, iLeftBlock );
+
+				if ( RangesOverlap ( uMinRightBlockRowID, uMaxRightBlockRowID ) )
+					DoEval ( iLevel+1, iRightBlock );
+			}
+			else
+			{
+				DoEval ( iLevel+1, iLeftBlock );
+				DoEval ( iLevel+1, iRightBlock );
+			}
 		}
 	}
 }
 
-
-void MinMaxEval_c::ResizeMinMax()
+template <bool ROWID_LIMITS>
+void MinMaxEval_T<ROWID_LIMITS>::ResizeMinMax()
 {
 	int iMaxLocator = 0;
 	for ( const auto & i : m_dHeaders )
@@ -117,8 +163,8 @@ void MinMaxEval_c::ResizeMinMax()
 		i = {0,0};
 }
 
-
-bool MinMaxEval_c::FillMinMax ( int iLevel, int iBlock )
+template <bool ROWID_LIMITS>
+bool MinMaxEval_T<ROWID_LIMITS>::FillMinMax ( int iLevel, int iBlock )
 {
 	int iNumBlocksOnLevel = m_dBlocksOnLevel[iLevel];
 	if ( iBlock>=iNumBlocksOnLevel )
@@ -133,13 +179,23 @@ bool MinMaxEval_c::FillMinMax ( int iLevel, int iBlock )
 	return true;
 }
 
+template <bool ROWID_LIMITS>
+uint32_t MinMaxEval_T<ROWID_LIMITS>::MinMaxBlockId2RowId ( int iBlockId ) const
+{
+	return iBlockId<<m_iMinMaxLeafShift;
+}
+
+template <bool ROWID_LIMITS>
+uint32_t MinMaxEval_T<ROWID_LIMITS>::MinMaxBlockId2RowId ( int iBlockId, int iLevel ) const
+{
+	return iBlockId << ( m_iNumLevels - iLevel - 1 + m_iMinMaxLeafShift );
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 void Settings_t::Load ( FileReader_c & tReader )
 {
 	m_iSubblockSize		= tReader.Read_uint32();
-	m_iSubblockSizeMva	= tReader.Read_uint32();
-	m_iMinMaxLeafSize	= tReader.Read_uint32();
 
 	// FIXME: should be removed before release
 	m_sCompressionUINT32 = tReader.Read_string();
@@ -150,11 +206,18 @@ void Settings_t::Load ( FileReader_c & tReader )
 void Settings_t::Save ( FileWriter_c & tWriter )
 {
 	tWriter.Write_uint32(m_iSubblockSize);
-	tWriter.Write_uint32(m_iSubblockSizeMva);
-	tWriter.Write_uint32(m_iMinMaxLeafSize);
-
 	tWriter.Write_string(m_sCompressionUINT32);
 	tWriter.Write_string(m_sCompressionUINT64);
+}
+
+
+bool Settings_t::Check ( FileReader_c & tReader, Reporter_fn & fnError )
+{
+	if ( !CheckInt32 ( tReader, 0, 65536, "Subblock size", fnError ) )			return false;	// m_iSubblockSize
+	if ( !CheckString ( tReader, 0, 128, "Uint32 compression algo", fnError ) )	return false;	// m_sCompressionUINT32
+	if ( !CheckString ( tReader, 0, 128, "Uint64 compression algo", fnError ) )	return false;	// m_sCompressionUINT64
+
+	return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -187,8 +250,8 @@ private:
 	int			m_iNumLevels = 0;
 
 	inline bool	SetCurBlock ( int iBlock );
-	inline int	GetNumDocs ( int iBlock ) const;
-	inline int	MinMaxBlockId2RowId ( int iBlockId ) const;
+	FORCE_INLINE int GetNumDocs ( int iBlock ) const;
+	FORCE_INLINE uint32_t MinMaxBlockId2RowId ( int iBlockId ) const;
 };
 
 
@@ -200,7 +263,7 @@ bool BlockIterator_c::Setup ( const std::vector<HeaderWithLocator_t> & dHeaders,
 	m_iTotalDocs = pFirstAttr->GetNumDocs();
 	m_iNumLevels = pFirstAttr->GetNumMinMaxLevels();
 	m_iNumBlocks = pFirstAttr->GetNumMinMaxBlocks ( m_iNumLevels-1 );
-	m_iDocsPerBlock = pFirstAttr->GetSettings().m_iMinMaxLeafSize;
+	m_iDocsPerBlock = pFirstAttr->GetSettings().m_iSubblockSize;
 	m_iMinMaxLeafShift = CalcNumBits(m_iDocsPerBlock)-1;
 
 	int iLeftover = m_iTotalDocs % m_iDocsPerBlock;
@@ -306,7 +369,7 @@ int BlockIterator_c::GetNumDocs ( int iBlock ) const
 }
 
 
-int BlockIterator_c::MinMaxBlockId2RowId ( int iBlockId ) const
+uint32_t BlockIterator_c::MinMaxBlockId2RowId ( int iBlockId ) const
 {
 	return iBlockId<<m_iMinMaxLeafShift;
 }
@@ -320,27 +383,28 @@ public:
 
 	bool								Setup ( std::string & sError );
 
-	Iterator_i *						CreateIterator ( const std::string & sName, const IteratorHints_t & tHints, std::string & sError ) const final;
-	std::vector<BlockIterator_i *>		CreateAnalyzerOrPrefilter ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, const BlockTester_i & tBlockTester, const GetAttrId_fn & fnGetAttrId ) const;
+	Iterator_i *						CreateIterator ( const std::string & sName, const IteratorHints_t & tHints, columnar::IteratorCapabilities_t * pCapabilities, std::string & sError ) const final;
+	std::vector<BlockIterator_i *>		CreateAnalyzerOrPrefilter ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, const BlockTester_i & tBlockTester ) const;
+	int									GetAttributeId ( const std::string & sName ) const;
 
-	bool								EarlyReject ( const std::vector<Filter_t> & dFilters, const BlockTester_i & tBlockTester, const GetAttrId_fn & fnGetAttrId ) const final;
+	bool								EarlyReject ( const std::vector<Filter_t> & dFilters, const BlockTester_i & tBlockTester ) const final;
 	bool								IsFilterDegenerate ( const Filter_t & tFilter ) const final;
 
 private:
 	std::string							m_sFilename;
 	uint32_t							m_uTotalDocs;
-	std::vector<AttributeHeader_i*>		m_dHeaders;
-	std::unordered_map<std::string, AttributeHeader_i*> m_hHeaders;
+	std::vector<std::unique_ptr<AttributeHeader_i>>	m_dHeaders;
+	std::unordered_map<std::string, HeaderWithLocator_t> m_hHeaders;
 	FileReader_c						m_tReader;
 
 	const AttributeHeader_i *			GetHeader ( const std::string & sName ) const;
 	bool								LoadHeaders ( FileReader_c & tReader, int iNumAttrs, std::string & sError );
 	FileReader_c *						CreateFileReader() const;
-	std::vector<HeaderWithLocator_t>	GetHeadersForMinMax ( const std::vector<Filter_t> & dFilters, const GetAttrId_fn & fnGetAttrId ) const;
+	std::vector<HeaderWithLocator_t>	GetHeadersForMinMax ( const std::vector<Filter_t> & dFilters ) const;
 
 	Analyzer_i *						CreateAnalyzer ( const Filter_t & tSettings, bool bHaveMatchingBlocks ) const;
 	std::vector<BlockIterator_i *>		TryToCreatePrefilter ( const std::vector<HeaderWithLocator_t> & dHeaders, SharedBlocks_c pMatchingBlocks ) const;
-	std::vector<BlockIterator_i *>		TryToCreateAnalyzers ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, SharedBlocks_c & pMatchingBlocks, const GetAttrId_fn & fnGetAttrId ) const;
+	std::vector<BlockIterator_i *>		TryToCreateAnalyzers ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, SharedBlocks_c & pMatchingBlocks ) const;
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -380,7 +444,7 @@ bool Columnar_c::Setup ( std::string & sError )
 }
 
 
-Iterator_i * Columnar_c::CreateIterator ( const std::string & sName, const IteratorHints_t & tHints, std::string & sError ) const
+Iterator_i * Columnar_c::CreateIterator ( const std::string & sName, const IteratorHints_t & tHints, columnar::IteratorCapabilities_t * pCapabilities, std::string & sError ) const
 {
 	const AttributeHeader_i * pHeader = GetHeader(sName);
 	if ( !pHeader )
@@ -399,7 +463,20 @@ Iterator_i * Columnar_c::CreateIterator ( const std::string & sName, const Itera
 
 	case AttrType_e::INT64:		return CreateIteratorUint64 ( *pHeader, pReader.release() );
 	case AttrType_e::BOOLEAN:	return CreateIteratorBool ( *pHeader, pReader.release() );
-	case AttrType_e::STRING:	return CreateIteratorStr ( *pHeader, pReader.release(), tHints );
+	case AttrType_e::STRING:
+		if ( tHints.m_bNeedStringHashes )
+		{
+			const AttributeHeader_i * pHashHeader = GetHeader ( GenerateHashAttrName(sName) );
+			if ( pHashHeader )
+			{
+				if ( pCapabilities )
+					pCapabilities->m_bStringHashes = true;
+
+				return CreateIteratorUint64 ( *pHashHeader, pReader.release() );
+			}
+		}
+		return CreateIteratorStr ( *pHeader, pReader.release() );
+	
 	case AttrType_e::UINT32SET:
 	case AttrType_e::INT64SET:
 		return CreateIteratorMVA ( *pHeader, pReader.release() );
@@ -452,13 +529,13 @@ Analyzer_i * Columnar_c::CreateAnalyzer ( const Filter_t & tSettings, bool bHave
 }
 
 
-std::vector<HeaderWithLocator_t> Columnar_c::GetHeadersForMinMax ( const std::vector<Filter_t> & dFilters, const GetAttrId_fn & fnGetAttrId ) const
+std::vector<HeaderWithLocator_t> Columnar_c::GetHeadersForMinMax ( const std::vector<Filter_t> & dFilters ) const
 {
 	int iBlocks=0;
 	std::vector<HeaderWithLocator_t> dHeaders;
 	for ( const auto & i : dFilters )
 	{
-		int iAttrIndex = fnGetAttrId ( i.m_sName );
+		int iAttrIndex = GetAttributeId ( i.m_sName );
 		if ( iAttrIndex<0 )
 			continue;
 
@@ -477,33 +554,89 @@ std::vector<HeaderWithLocator_t> Columnar_c::GetHeadersForMinMax ( const std::ve
 }
 
 
-std::vector<BlockIterator_i *> Columnar_c::CreateAnalyzerOrPrefilter ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, const BlockTester_i & tBlockTester, const GetAttrId_fn & fnGetAttrId ) const
+static void FetchRowIdLimits ( const Filter_t & tFilter, uint32_t uNumDocs, uint32_t & uMinRowID, uint32_t & uMaxRowID )
 {
-	std::vector<HeaderWithLocator_t> dHeaders = GetHeadersForMinMax ( dFilters, fnGetAttrId );
+	uint32_t uMin = (uint32_t)tFilter.m_iMinValue;
+	uint32_t uMax = (uint32_t)tFilter.m_iMaxValue;
+	double fDelta = (double)uNumDocs / uMax;
+	uMinRowID = uint32_t ( fDelta*uMin );
+	uMaxRowID = (uMin==uMax-1) ? uNumDocs : uint32_t ( fDelta*(uMin+1) )-1;
+}
+
+
+static void PopulateMatchingBlocks ( MatchingBlocks_c & tBlocks, int iBlockSize, uint32_t uMinRowID, uint32_t uMaxRowID )
+{
+	int iStart = uMinRowID / iBlockSize;
+	int iEnd = uMaxRowID / iBlockSize + 1;
+	for ( int i = iStart; i < iEnd; i++ )
+		tBlocks.Add(i);
+}
+
+
+std::vector<BlockIterator_i *> Columnar_c::CreateAnalyzerOrPrefilter ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, const BlockTester_i & tBlockTester ) const
+{
+	std::vector<HeaderWithLocator_t> dHeaders = GetHeadersForMinMax(dFilters);
 	SharedBlocks_c pMatchingBlocks ( dHeaders.empty() ? nullptr : new MatchingBlocks_c );
 
-	if ( pMatchingBlocks.get() )
+	const Filter_t * pRowIdFilter = nullptr;
+	for ( auto & i : dFilters )
+		if ( i.m_sName=="@rowid" )
+		{
+			pRowIdFilter = &i;
+			break;
+		}
+
+	uint32_t uMinRowID = 0;
+	uint32_t uMaxRowID = INVALID_ROW_ID;
+	if ( pRowIdFilter )
+		FetchRowIdLimits ( *pRowIdFilter, m_dHeaders[0]->GetNumDocs(), uMinRowID, uMaxRowID );
+
+	bool bMinMaxBlocks = !!pMatchingBlocks;
+	if ( bMinMaxBlocks )
 	{
-		MinMaxEval_c tMinMaxEval ( dHeaders, tBlockTester, pMatchingBlocks );
-		tMinMaxEval.Eval();
+		if ( pRowIdFilter )
+		{
+			MinMaxEval_T<true> tMinMaxEval ( dHeaders, tBlockTester, pMatchingBlocks, uMinRowID, uMaxRowID );
+			tMinMaxEval.Eval();
+		}
+		else
+		{
+			MinMaxEval_T<false> tMinMaxEval ( dHeaders, tBlockTester, pMatchingBlocks, uMinRowID, uMaxRowID );
+			tMinMaxEval.Eval();
+		}
+	}
+	else
+	{
+		pMatchingBlocks = SharedBlocks_c ( new MatchingBlocks_c );
+		PopulateMatchingBlocks ( *pMatchingBlocks, m_dHeaders[0]->GetSettings().m_iSubblockSize, uMinRowID, uMaxRowID );
 	}
 
-	std::vector<BlockIterator_i *> dAnalyzers = TryToCreateAnalyzers ( dFilters, dDeletedFilters, pMatchingBlocks, fnGetAttrId );
+	std::vector<BlockIterator_i *> dAnalyzers = TryToCreateAnalyzers ( dFilters, dDeletedFilters, pMatchingBlocks );
 	if ( !dAnalyzers.empty() )
 		return dAnalyzers;
+
+	if ( !bMinMaxBlocks )
+		return {};
 
 	return TryToCreatePrefilter ( dHeaders, pMatchingBlocks );
 }
 
 
-bool Columnar_c::EarlyReject ( const std::vector<Filter_t> & dFilters, const BlockTester_i & tBlockTester, const GetAttrId_fn & fnGetAttrId ) const
+int Columnar_c::GetAttributeId ( const std::string & sName ) const
 {
-	std::vector<HeaderWithLocator_t> dHeaders = GetHeadersForMinMax ( dFilters, fnGetAttrId );
+	const auto & tFound = m_hHeaders.find(sName);
+	return tFound==m_hHeaders.end() ? -1 : tFound->second.second;
+}
+
+
+bool Columnar_c::EarlyReject ( const std::vector<Filter_t> & dFilters, const BlockTester_i & tBlockTester ) const
+{
+	std::vector<HeaderWithLocator_t> dHeaders = GetHeadersForMinMax(dFilters);
 	if ( dHeaders.empty() )
 		return false;
 
 	SharedBlocks_c pShared(nullptr);
-	MinMaxEval_c tMinMaxEval ( dHeaders, tBlockTester, pShared );
+	MinMaxEval_T<false> tMinMaxEval ( dHeaders, tBlockTester, pShared, 0, INVALID_ROW_ID );
 	return !tMinMaxEval.EvalAll();
 }
 
@@ -522,7 +655,7 @@ bool Columnar_c::IsFilterDegenerate ( const Filter_t & tFilter ) const
 }
 
 
-std::vector<BlockIterator_i *> Columnar_c::TryToCreateAnalyzers ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, SharedBlocks_c & pMatchingBlocks, const GetAttrId_fn & fnGetAttrId ) const
+std::vector<BlockIterator_i *> Columnar_c::TryToCreateAnalyzers ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, SharedBlocks_c & pMatchingBlocks ) const
 {
 	std::vector<BlockIterator_i*> dAnalyzers;
 
@@ -530,16 +663,13 @@ std::vector<BlockIterator_i *> Columnar_c::TryToCreateAnalyzers ( const std::vec
 	{
 		const auto & tFilter = dFilters[i];
 
-		int iAttrIndex = fnGetAttrId ( tFilter.m_sName );
+		int iAttrIndex = GetAttributeId ( tFilter.m_sName );
 		if ( iAttrIndex<0 )
 			continue;
 
 		const AttributeHeader_i * pHeader = GetHeader ( tFilter.m_sName );
 		if ( pHeader )
 		{
-			// assume that minmax leaf size is the same as subblock size, it makes things easier
-			assert ( pHeader->GetSettings().m_iMinMaxLeafSize == pHeader->GetSettings().m_iSubblockSize );
-
 			Analyzer_i * pAnalyzer = CreateAnalyzer ( tFilter, !!pMatchingBlocks );
 			if ( pAnalyzer )
 			{
@@ -570,7 +700,7 @@ std::vector<BlockIterator_i *> Columnar_c::TryToCreatePrefilter ( const std::vec
 const AttributeHeader_i * Columnar_c::GetHeader ( const std::string & sName ) const
 {
 	const auto & tFound = m_hHeaders.find(sName);
-	return tFound==m_hHeaders.end() ? nullptr : tFound->second;
+	return tFound==m_hHeaders.end() ? nullptr : tFound->second.first;
 }
 
 
@@ -578,7 +708,7 @@ bool Columnar_c::LoadHeaders ( FileReader_c & tReader, int iNumAttrs, std::strin
 {
 	m_dHeaders.resize(iNumAttrs);
 
-	for ( auto & i : m_dHeaders )
+	for ( size_t i = 0; i < m_dHeaders.size(); i++ )
 	{
 		AttrType_e eType = AttrType_e ( tReader.Read_uint32() );
 		std::unique_ptr<AttributeHeader_i> pHeader ( CreateAttributeHeader ( eType, m_uTotalDocs, sError ) );
@@ -588,8 +718,8 @@ bool Columnar_c::LoadHeaders ( FileReader_c & tReader, int iNumAttrs, std::strin
 		if ( !pHeader->Load ( tReader, sError ) )
 			return false;
 
-		i = pHeader.release();
-		m_hHeaders.insert ( { i->GetName(), i } );
+		m_dHeaders[i] = std::move(pHeader);
+		m_hHeaders.insert ( { m_dHeaders[i]->GetName(), { m_dHeaders[i].get(), (int)i } } );
 		tReader.Seek ( tReader.Read_uint64() );
 	}
 
@@ -609,9 +739,9 @@ columnar::Columnar_i * CreateColumnarStorageReader ( const std::string & sFilena
 }
 
 
-void SetupColumnar ( columnar::Malloc_fn fnMalloc, columnar::Free_fn fnFree )
+void CheckColumnarStorage ( const std::string & sFilename, uint32_t uNumRows, columnar::Reporter_fn & fnError, columnar::Reporter_fn & fnProgress )
 {
-	columnar::SetupAlloc ( fnMalloc, fnFree );
+	columnar::CheckStorage ( sFilename, uNumRows, fnError, fnProgress );
 }
 
 
@@ -625,4 +755,10 @@ extern const char * LIB_VERSION;
 const char * GetColumnarLibVersionStr()
 {
 	return LIB_VERSION;
+}
+
+
+int GetColumnarStorageVersion()
+{
+	return columnar::STORAGE_VERSION;
 }

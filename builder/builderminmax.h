@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _builderminmax_
-#define _builderminmax_
+#pragma once
 
 #include "attributeheader.h"
 
@@ -51,21 +50,13 @@ template<typename T>
 MinMaxBuilder_T<T>::MinMaxBuilder_T ( const Settings_t & tSettings )
 	: m_tSettings ( tSettings )
 {
-#ifndef NDEBUG
-	int iSubblockSize = tSettings.m_iSubblockSize;
-	int iLeafSize = tSettings.m_iMinMaxLeafSize;
-	assert ( ( iSubblockSize & (iSubblockSize - 1) ) == 0 );
-	assert ( ( iLeafSize & (iLeafSize - 1) ) == 0 );
-	assert ( iLeafSize>=iSubblockSize );
-#endif
-
 	m_dTreeLevels.resize(1);
 }
 
 template<typename T>
 void MinMaxBuilder_T<T>::Add ( int64_t tValue )
 {
-	if ( m_iCollected==m_tSettings.m_iMinMaxLeafSize )
+	if ( m_iCollected==m_tSettings.m_iSubblockSize )
 		Flush();
 
 	T tConverted = to_type<T>(tValue);
@@ -88,7 +79,7 @@ void MinMaxBuilder_T<T>::Add ( int64_t tValue )
 template<typename T>
 void MinMaxBuilder_T<T>::Add ( const int64_t * pValues, int iNumValues )
 {
-	if ( m_iCollected==m_tSettings.m_iMinMaxLeafSize )
+	if ( m_iCollected==m_tSettings.m_iSubblockSize )
 		Flush();
 
 	if ( !iNumValues )
@@ -217,5 +208,3 @@ inline bool MinMaxBuilder_T<float>::SaveTreeLevels ( FileWriter_c & tWriter ) co
 }
 
 } // namespace columnar
-
-#endif // _builderminmax_

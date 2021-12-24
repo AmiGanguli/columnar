@@ -1,6 +1,12 @@
-# Manticore Columnar Library
+<p align="center">
+  <a href="https://manticoresearch.com" target="_blank" rel="noopener">
+    <img src="https://manticoresearch.com/wp-content/uploads/2019/12/manticore-logo-central-M-1.png" width="140" alt="Manicore Search Logo">
+  </a>
+</p>
 
-⚠️ PLEASE NOTE: This library is currently in beta and should be used in production with caution! The library is being actively developed and data formats can and will be changed.
+<h1 align="center">
+  Manticore Columnar Library 1.11.4
+</h1>
 
 Manticore Columnar Library is a column-oriented storage library, aiming to provide **decent performance with low memory footprint at big data volume**.
 When used in combination with [Manticore Search](https://github.com/manticoresoftware/manticoresearch) can be beneficial for those looking for:
@@ -11,12 +17,11 @@ When used in combination with [Manticore Search](https://github.com/manticoresof
 
 ## Getting started
 
-### Installation from dev yum/apt repositories
+### Installation from yum/apt repositories
 #### Ubuntu, Debian:
 ```bash
-sudo wget https://repo.manticoresearch.com/manticore-dev-repo.noarch.deb
-sudo dpkg -i manticore-dev-repo.noarch.deb
-sudo apt-key adv --fetch-keys 'http://repo.manticoresearch.com/GPG-KEY-manticore'
+wget https://repo.manticoresearch.com/manticore-repo.noarch.deb
+sudo dpkg -i manticore-repo.noarch.deb
 sudo apt update
 sudo apt install manticore manticore-columnar-lib
 ```
@@ -24,20 +29,18 @@ sudo apt install manticore manticore-columnar-lib
 #### Centos:
 ```bash
 sudo yum install https://repo.manticoresearch.com/manticore-repo.noarch.rpm
-sudo yum --enablerepo manticore-dev install manticore manticore-columnar-lib
+sudo yum install manticore manticore-columnar-lib
 ```
 
 `searchd -v` should include `columnar x.y.z`, e.g.:
 ```bash
 root@srv# searchd -v
-Manticore 3.5.5 02802ecb@210325 release (columnar 0.9.9 61bc681@210325)
+Manticore 4.0.2 af497f245@210921 release (columnar 1.11.2 69d3780@210921)
 ```
 
 ### Basic usage:
-1. Add a plain index to Manticore - https://manual.manticoresearch.com/Creating_an_index/Local_indexes/Plain_index#Plain-index
-2. Add `columnar_attrs = attr1, attr2, attr3, ..., attr4` to the plain index (section `index`). You can add `id` too.
-3. Build the index us usually - https://play.manticoresearch.com/mysql/
-
+1. Read https://manual.manticoresearch.com/Creating_an_index/Data_types#How-to-switch-between-the-storages
+2. Create plain or real-time index specifying that the columnar storage should be used
 
 ## Benchmark "Hacker News comments"
 

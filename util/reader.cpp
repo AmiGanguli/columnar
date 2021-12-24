@@ -17,14 +17,19 @@
 #include "reader.h"
 #include "assert.h"
 #include <errno.h>
+#include <sys/stat.h>
 
 #ifdef _MSC_VER
 	#define WIN32_LEAN_AND_MEAN
 	#define NOMINMAX
 	#include <windows.h>
 	#include <io.h>
+	#define stat		_stat64
+	#define fstat		_fstat64
+	#define struct_stat	struct _stat64
 #else
 	#include <unistd.h>
+	#define struct_stat        struct stat
 #endif
 
 
@@ -81,7 +86,13 @@ FileReader_c::FileReader_c ( int iFD )
 
 bool FileReader_c::Open ( const std::string & sName, std::string & sError )
 {
+#ifdef _MSC_VER
+	HANDLE tHandle = CreateFile ( sName.c_str(), GENERIC_READ, FILE_SHARE_DELETE | FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL );
+	m_iFD = _open_osfhandle ( (intptr_t)tHandle, 0 );
+#else
 	m_iFD = ::open ( sName.c_str(), O_RDONLY | O_BINARY, 0644 );
+#endif
+
 	if ( m_iFD<0 )
     {
         sError = FormatStr ( "error opening '%s': %s", sName.c_str(), strerror(errno) );
@@ -173,6 +184,25 @@ bool FileReader_c::ReadToBuffer()
 	m_iFilePos = iNewFilePos;
 
 	return true;
+}
+
+
+int64_t FileReader_c::GetFileSize()
+{
+	if ( m_iFD<0 )
+	{
+		m_sError = FormatStr ( "invalid FD: %d", m_iFD );
+		return -1;
+	}
+
+	struct_stat tStat;
+	if ( fstat ( m_iFD, &tStat )<0 )
+	{
+		m_sError = FormatStr ( "fstat failed for %d: '%s'", m_iFD, strerror(errno) );
+		return -1;
+	}
+
+	return tStat.st_size;
 }
 
 } // namespace columnar

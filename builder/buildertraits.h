@@ -14,30 +14,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _buildertraits_
-#define _buildertraits_
+#pragma once
 
-#include <assert.h>
 #include "builder.h"
 #include "util.h"
 #include "delta.h"
+#include "codec.h"
+#include <cassert>
 
 namespace columnar
 {
 
 static const uint32_t	BLOCK_ID_BITS = 16;
 static const int		DOCS_PER_BLOCK = 1 << BLOCK_ID_BITS;
-
-class IntCodec_i
-{
-public:
-	virtual			~IntCodec_i() = default;
-
-	virtual void	Encode ( const Span_T<uint32_t> & dUncompressed, std::vector<uint32_t> & dCompressed ) = 0;
-	virtual void	Encode ( const Span_T<uint64_t> & dUncompressed, std::vector<uint32_t> & dCompressed ) = 0;
-	virtual bool	Decode ( const Span_T<uint32_t> & dCompressed, SpanResizeable_T<uint32_t> & dDecompressed ) = 0;
-	virtual bool	Decode ( const Span_T<uint32_t> & dCompressed, SpanResizeable_T<uint64_t> & dDecompressed ) = 0;
-};
 
 
 class AttributeHeaderBuilder_c
@@ -197,14 +186,8 @@ static void WriteValues_PFOR ( const Span_T<T> & dValues, std::vector<T> & dTmpU
 	tWriter.Write ( (const uint8_t*)dTmpCompressed.data(), dTmpCompressed.size()*sizeof ( dTmpCompressed[0] ) );
 }
 
-
-void BitPack128 ( const std::vector<uint32_t> & dValues, std::vector<uint32_t> & dPacked, int iBits );
-void BitUnpack128 ( const std::vector<uint32_t> & dPacked, std::vector<uint32_t> & dValues, int iBits );
-void BitUnpack128 ( const Span_T<uint32_t> & dPacked, Span_T<uint32_t> & dValues, int iBits );
-
-
 template <typename UNIQ_VEC, typename UNIQ_HASH, typename COLLECTED>
-void WriteTableOrdinals ( UNIQ_VEC & dUniques, UNIQ_HASH & hUnique, COLLECTED & dCollected, std::vector<uint32_t> & dTableIndexes, std::vector<uint32_t> & dCompressed, FileWriter_c & tWriter )
+void WriteTableOrdinals ( UNIQ_VEC & dUniques, UNIQ_HASH & hUnique, COLLECTED & dCollected, std::vector<uint32_t> & dTableIndexes, std::vector<uint32_t> & dCompressed, int iSubblockSize, FileWriter_c & tWriter )
 {
 	// write the ordinals
 	int iBits = CalcNumBits ( dUniques.size() );
@@ -218,9 +201,9 @@ void WriteTableOrdinals ( UNIQ_VEC & dUniques, UNIQ_HASH & hUnique, COLLECTED & 
 		assert ( tFound->second<256 );
 
 		dTableIndexes[iId++] = tFound->second;
-		if ( iId==128 )
+		if ( iId==iSubblockSize )
 		{
-			BitPack128 ( dTableIndexes, dCompressed, iBits );
+			BitPack ( dTableIndexes, dCompressed, iBits );
 			tWriter.Write ( (uint8_t*)dCompressed.data(), dCompressed.size()*sizeof(dCompressed[0]) );
 			iId = 0;
 		}
@@ -230,13 +213,11 @@ void WriteTableOrdinals ( UNIQ_VEC & dUniques, UNIQ_HASH & hUnique, COLLECTED & 
 	{
 		// zero out unused values
 		memset ( dTableIndexes.data()+iId, 0, (dTableIndexes.size()-iId)*sizeof(dTableIndexes[0]) );
-		BitPack128 ( dTableIndexes, dCompressed, iBits );
+		BitPack ( dTableIndexes, dCompressed, iBits );
 		tWriter.Write ( (uint8_t*)dCompressed.data(), dCompressed.size()*sizeof(dCompressed[0]) );
 	}
 }
 
-IntCodec_i * CreateIntCodec ( const std::string & sCodec32, const std::string & sCodec64 );
+std::string GenerateHashAttrName ( const std::string & sAttr );
 
 } // namespace columnar
-
-#endif // _buildertraits_

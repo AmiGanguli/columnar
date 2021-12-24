@@ -17,6 +17,7 @@
 #include "attributeheader.h"
 #include "buildertraits.h"
 #include "reader.h"
+#include "check.h"
 
 namespace columnar
 {
@@ -32,6 +33,7 @@ public:
 	inline Element_t	Get ( int iLevel, int iBlock ) const	{ return m_dTreeLevels[iLevel].second[iBlock]; }
 
 	bool				Load ( FileReader_c & tReader, std::string & sError );
+	bool				Check ( FileReader_c & tReader, Reporter_fn & fnError );
 
 private:
 	using TreeLevel_t = std::pair<int,Element_t*>;
@@ -74,6 +76,37 @@ bool MinMax_T<T>::Load ( FileReader_c & tReader, std::string & sError )
 	{
 		sError = tReader.GetError();
 		return false;
+	}
+
+	return true;
+}
+
+template <typename T>
+bool MinMax_T<T>::Check ( FileReader_c & tReader, Reporter_fn & fnError )
+{
+	int iTreeLevels = 0;
+	if ( !CheckInt32Packed ( tReader, 0, 128, "Number of minmax tree levels", iTreeLevels, fnError ) ) return false;
+
+	int iTotalElements = 0;
+	int iLastElements = 0;
+	for ( int i = 0; i < iTreeLevels; i++ )
+	{
+		int iElementsOnLevel = (int)tReader.Unpack_uint32();
+		if ( iElementsOnLevel < iLastElements )
+		{
+			fnError ( "Decreasing number of elements on minmax tree levels" );
+			return false;
+		}
+
+		iLastElements = iElementsOnLevel;
+		iTotalElements += iElementsOnLevel;
+	}
+
+	// fixme: maybe add minmax tree verification (opposite of construction process)
+	for ( int i = 0; i < iTotalElements; i++ )
+	{
+		tReader.Unpack_uint64();
+		tReader.Unpack_uint64();
 	}
 
 	return true;
@@ -133,9 +166,8 @@ public:
 	int						GetNumMinMaxBlocks ( int iLevel ) const override { return 0; }
 	std::pair<int64_t,int64_t> GetMinMax ( int iLevel, int iBlock ) const override { return {0, 0}; }
 
-	bool					HaveStringHashes() const override { return false; }
-
 	bool					Load ( FileReader_c & tReader, std::string & sError ) override;
+	bool					Check ( FileReader_c & tReader, Reporter_fn & fnError ) override;
 
 private:
 	std::string				m_sName;
@@ -174,7 +206,9 @@ bool AttributeHeader_c::Load ( FileReader_c & tReader, std::string & sError )
 
 	m_dBlocks.resize ( tReader.Unpack_uint32() );
 
-	m_dBlocks[0] = uOffset;
+	if ( !m_dBlocks.empty() )
+		m_dBlocks[0] = uOffset;
+
 	for ( size_t i=1; i < m_dBlocks.size(); i++ )
 		m_dBlocks[i] = tReader.Unpack_uint64() + m_dBlocks[i-1];
 
@@ -182,6 +216,30 @@ bool AttributeHeader_c::Load ( FileReader_c & tReader, std::string & sError )
 	{
 		sError = tReader.GetError();
 		return false;
+	}
+
+	return true;
+}
+
+
+bool AttributeHeader_c::Check ( FileReader_c & tReader, Reporter_fn & fnError )
+{
+	int iBlocks = 0;
+	int64_t iOffset = 0;
+	int64_t iFileSize = tReader.GetFileSize();
+	if ( !m_tSettings.Check ( tReader, fnError ) ) return false;
+	if ( !CheckString ( tReader, 0, 1024, "Attribute name", fnError ) ) return false;
+	if ( !CheckInt64 ( tReader, 0, iFileSize, "Header offset", iOffset, fnError ) ) return false;
+	if ( !CheckInt32Packed ( tReader, 0, int ( m_uTotalDocs/65536 )+1, "Number of blocks", iBlocks, fnError ) ) return false;
+
+	for ( int i = 0; i < iBlocks-1; i++ )
+	{
+		iOffset += (int64_t)tReader.Unpack_uint64();
+		if ( iOffset<0 || iOffset>iFileSize )
+		{
+			fnError ( FormatStr ( "Block offset out of bounds: %lld", iOffset ).c_str() );
+			return false;
+		}
 	}
 
 	return true;
@@ -201,6 +259,7 @@ public:
 	std::pair<int64_t,int64_t> GetMinMax ( int iLevel, int iBlock ) const override;
 
 	bool			Load ( FileReader_c & tReader, std::string & sError ) override;
+	bool			Check ( FileReader_c & tReader, Reporter_fn & fnError ) override;
 
 private:
 	MinMax_T<T>		m_tMinMax;
@@ -216,6 +275,15 @@ bool AttributeHeader_Int_T<T>::Load ( FileReader_c & tReader, std::string & sErr
 }
 
 template <typename T>
+bool AttributeHeader_Int_T<T>::Check ( FileReader_c & tReader, Reporter_fn & fnError )
+{
+	if ( !BASE::Check ( tReader, fnError ) )
+		return false;
+
+	return m_tMinMax.Check ( tReader, fnError );
+}
+
+template <typename T>
 std::pair<int64_t,int64_t> AttributeHeader_Int_T<T>::GetMinMax ( int iLevel, int iBlock ) const
 {
 	auto tMinMax = m_tMinMax.Get ( iLevel, iBlock );
@@ -227,39 +295,6 @@ std::pair<int64_t,int64_t> AttributeHeader_Int_T<float>::GetMinMax ( int iLevel,
 {
 	auto tMinMax = m_tMinMax.Get ( iLevel, iBlock );
 	return { FloatToUint ( tMinMax.first ), FloatToUint ( tMinMax.second ) };
-}
-
-//////////////////////////////////////////////////////////////////////////
-
-class AttributeHeader_String_c : public AttributeHeader_Int_T<uint32_t>
-{
-	using BASE = AttributeHeader_Int_T<uint32_t>;
-
-public:
-			AttributeHeader_String_c ( uint32_t uTotalDocs ) : BASE ( AttrType_e::STRING, uTotalDocs ) {}
-
-	bool	HaveStringHashes() const final { return m_bHaveHashes; }
-	bool	Load ( FileReader_c & tReader, std::string & sError ) override;
-
-private:
-	bool	m_bHaveHashes = false;
-};
-
-
-bool AttributeHeader_String_c::Load ( FileReader_c & tReader, std::string & sError )
-{
-	if ( !BASE::Load ( tReader, sError ) )
-		return false;
-
-	m_bHaveHashes = !!tReader.Read_uint8();
-
-	if ( tReader.IsError() )
-	{
-		sError = tReader.GetError();
-		return false;
-	}
-
-	return true;
 }
 
 //////////////////////////////////////////////////////////////////////////
@@ -282,7 +317,7 @@ AttributeHeader_i * CreateAttributeHeader ( AttrType_e eType, uint32_t uTotalDoc
 		return new AttributeHeader_Int_T<float> ( eType, uTotalDocs );
 
 	case AttrType_e::STRING:
-		return new AttributeHeader_String_c(uTotalDocs);
+		return new AttributeHeader_Int_T<uint32_t> (eType, uTotalDocs);
 
 	case AttrType_e::UINT32SET:
 		return new AttributeHeader_Int_T<uint32_t> ( eType, uTotalDocs );

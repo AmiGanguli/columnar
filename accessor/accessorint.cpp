@@ -20,14 +20,13 @@
 #include "builderint.h"
 #include "interval.h"
 #include "reader.h"
+#include "check.h"
 
 #include <algorithm>
 #include <tuple>
 
 namespace columnar
 {
-
-//////////////////////////////////////////////////////////////////////////
 
 template <typename T>
 class StoredBlock_Int_Const_T
@@ -76,7 +75,7 @@ template <typename T>
 StoredBlock_Int_Table_T<T>::StoredBlock_Int_Table_T ( int iSubblockSize, const std::string & sCodec32, const std::string & sCodec64 )
 	: m_pCodec ( CreateIntCodec ( sCodec32, sCodec64 ) )
 {
-	assert ( iSubblockSize==128 );
+	assert ( !( iSubblockSize & 127 ) );
 	m_dValueIndexes.resize(iSubblockSize);
 }
 
@@ -84,7 +83,6 @@ template <typename T>
 void StoredBlock_Int_Table_T<T>::ReadHeader ( FileReader_c & tReader )
 {
 	m_dTableValues.resize ( tReader.Read_uint8() );
-	T tCurValue = 0;
 
 	uint32_t uTotalSize = tReader.Unpack_uint32();
 	DecodeValues_Delta_PFOR ( m_dTableValues, tReader, *m_pCodec, m_dTmp, uTotalSize, false );
@@ -107,7 +105,7 @@ void StoredBlock_Int_Table_T<T>::ReadSubblock ( int iSubblockId, int iNumValues,
 	size_t uPackedSize = m_dEncoded.size()*sizeof ( m_dEncoded[0] );
 	tReader.Seek ( m_iValuesOffset + uPackedSize*iSubblockId );
 	tReader.Read ( (uint8_t*)m_dEncoded.data(), uPackedSize );
-	BitUnpack128 ( m_dEncoded, m_dValueIndexes, m_iBits );
+	BitUnpack ( m_dEncoded, m_dValueIndexes, m_iBits );
 
 	m_tValuesRead = { m_dValueIndexes.data(), (size_t)iNumValues };
 }
@@ -139,6 +137,7 @@ public:
 	FORCE_INLINE void		ReadHeader ( FileReader_c & tReader );
 	FORCE_INLINE void		ReadSubblock_Delta ( int iSubblockId, FileReader_c & tReader );
 	FORCE_INLINE void		ReadSubblock_Generic ( int iSubblockId, FileReader_c & tReader );
+	FORCE_INLINE void		ReadSubblock_Hash ( int iSubblockId, FileReader_c & tReader, int iNumSubblockValues );
 	FORCE_INLINE T			GetValue ( int iIdInSubblock ) const;
 	FORCE_INLINE const Span_T<T> & GetAllValues() const { return m_dSubblockValues; }
 
@@ -146,6 +145,8 @@ private:
 	std::unique_ptr<IntCodec_i>	m_pCodec;
 	SpanResizeable_T<uint32_t>	m_dSubblockCumulativeSizes;
 	SpanResizeable_T<uint32_t>	m_dTmp;
+	SpanResizeable_T<uint64_t>	m_dTmp64;
+	SpanResizeable_T<uint32_t>	m_dNullMap;
 	int64_t						m_tValuesOffset = 0;
 
 	int							m_iSubblockId = -1;
@@ -153,6 +154,8 @@ private:
 
 	template <typename DECOMPRESS>
 	FORCE_INLINE void		ReadSubblock ( int iSubblockId, FileReader_c & tReader, DECOMPRESS && fnDecompress );
+	FORCE_INLINE void		DecodeValues_Hash ( SpanResizeable_T<T> & dValues, FileReader_c & tReader, int iNumSubblockValues );
+	FORCE_INLINE void		ReadHashesWithNullMap ( FileReader_c & tReader, int iValues, int iNumHashes );
 };
 
 template <typename T>
@@ -178,6 +181,14 @@ void StoredBlock_Int_PFOR_T<T>::ReadSubblock_Generic ( int iSubblockId, FileRead
 {
 	ReadSubblock ( iSubblockId, tReader, [this] ( SpanResizeable_T<T> & dValues, FileReader_c & tReader, uint32_t uTotalSize )
 		{ DecodeValues_PFOR ( dValues, tReader, *m_pCodec, m_dTmp, uTotalSize); }
+	);
+}
+
+template <typename T>
+void StoredBlock_Int_PFOR_T<T>::ReadSubblock_Hash ( int iSubblockId, FileReader_c & tReader, int iNumSubblockValues )
+{
+	ReadSubblock ( iSubblockId, tReader, [this,iNumSubblockValues] ( SpanResizeable_T<T> & dValues, FileReader_c & tReader, uint32_t uTotalSize )
+		{ DecodeValues_Hash ( dValues, tReader, iNumSubblockValues ); }
 	);
 }
 
@@ -208,6 +219,47 @@ T StoredBlock_Int_PFOR_T<T>::GetValue ( int iIdInSubblock ) const
 	return m_dSubblockValues[iIdInSubblock];
 }
 
+template <typename T>
+void StoredBlock_Int_PFOR_T<T>::DecodeValues_Hash ( SpanResizeable_T<T> & dValues, FileReader_c & tReader, int iNumSubblockValues )
+{
+	int iNumHashes = tReader.Read_uint16();
+	bool bHaveNullMap = iNumSubblockValues!=iNumHashes;
+	size_t tTotalHashSize = iNumHashes*sizeof(uint64_t);
+
+	m_dSubblockValues.resize(iNumSubblockValues);
+	if ( bHaveNullMap )
+		ReadHashesWithNullMap ( tReader, iNumSubblockValues, iNumHashes );
+	else
+		tReader.Read ( (uint8_t*)m_dSubblockValues.data(), tTotalHashSize );
+}
+
+template <typename T>
+void StoredBlock_Int_PFOR_T<T>::ReadHashesWithNullMap ( FileReader_c & tReader, int iValues, int iNumHashes )
+{
+	assert ( !(iValues & 127 ) );
+	m_dTmp.resize ( iValues >> 5 );
+	m_dNullMap.resize(iValues);
+	tReader.Read ( (uint8_t*)m_dTmp.data(), m_dTmp.size()*sizeof(m_dTmp[0]) );
+	BitUnpack ( m_dTmp, m_dNullMap, 1 );
+
+	m_dTmp64.resize ( iNumHashes );
+	tReader.Read ( (uint8_t*)m_dTmp64.data(), iNumHashes*sizeof(uint64_t) );
+
+	memset ( m_dSubblockValues.data(), 0, m_dSubblockValues.size()*sizeof(m_dSubblockValues[0]) );
+	uint64_t * pHash = m_dTmp64.data();
+	uint64_t * pHashEnd = m_dTmp64.end();
+	T * pDst = m_dSubblockValues.data();
+	const uint32_t * pNullMap = m_dNullMap.data();
+	while ( pHash!=pHashEnd )
+	{
+		if ( *pNullMap )
+			*pDst = (T)*pHash++;
+
+		pDst++;
+		pNullMap++;
+	}
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 template<typename T>
@@ -234,6 +286,7 @@ protected:
 	int64_t			ReadValue_Table();
 	int64_t			ReadValue_Delta();
 	int64_t			ReadValue_Generic();
+	int64_t			ReadValue_Hash();
 };
 
 template<typename T>
@@ -277,6 +330,11 @@ void Accessor_INT_T<T>::SetCurBlock ( uint32_t uBlockId )
 		m_tBlockPFOR.ReadHeader ( *m_pReader );
 		break;
 
+	case IntPacking_e::HASH:
+		m_fnReadValue = &Accessor_INT_T<T>::ReadValue_Hash;
+		m_tBlockPFOR.ReadHeader ( *m_pReader );
+		break;
+
 	default:
 		assert ( 0 && "Packing not implemented yet" );
 	}
@@ -315,6 +373,15 @@ int64_t Accessor_INT_T<T>::ReadValue_Generic()
 	return m_tBlockPFOR.GetValue ( GetValueIdInSubblock(uIdInBlock) );
 }
 
+template<typename T>
+int64_t Accessor_INT_T<T>::ReadValue_Hash()
+{
+	uint32_t uIdInBlock = m_tRequestedRowID - m_tStartBlockRowId;
+	int iSubblockId = GetSubblockId(uIdInBlock);
+	m_tBlockPFOR.ReadSubblock_Hash ( iSubblockId, *m_pReader, StoredBlockTraits_t::GetNumSubblockValues(iSubblockId) );
+	return m_tBlockPFOR.GetValue ( GetValueIdInSubblock(uIdInBlock) );
+}
+
 //////////////////////////////////////////////////////////////////////////
 
 template<typename T>
@@ -324,22 +391,38 @@ class Iterator_INT_T : public Iterator_i, public Accessor_INT_T<T>
 	using BASE::Accessor_INT_T;
 
 public:
-	uint32_t	AdvanceTo ( uint32_t tRowID ) final;
+	uint32_t	AdvanceTo ( uint32_t tRowID ) final		{ return DoAdvance(tRowID); }
+	int64_t		Get() final								{ return DoGet(); }
 
-	int64_t		Get() final;
+	void		Fetch ( const Span_T<uint32_t> & dRowIDs, Span_T<int64_t> & dValues ) final;
 
 	int			Get ( const uint8_t * & pData ) final	{ assert ( 0 && "INTERNAL ERROR: requesting blob from int iterator" ); return 0; }
 	uint8_t *	GetPacked() final						{ assert ( 0 && "INTERNAL ERROR: requesting blob from int iterator" ); return nullptr; }
 	int			GetLength() final						{ assert ( 0 && "INTERNAL ERROR: requesting blob length from int iterator" ); return 0; }
 
-	uint64_t	GetStringHash() final					{ return 0; }
-	bool		HaveStringHashes() const final			{ return false; }
+private:
+	FORCE_INLINE uint32_t	DoAdvance ( uint32_t tRowID );
+	FORCE_INLINE int64_t	DoGet();
 };
 
+template<typename T>
+void Iterator_INT_T<T>::Fetch ( const Span_T<uint32_t> & dRowIDs, Span_T<int64_t> & dValues )
+{
+	uint32_t * pRowID = dRowIDs.begin();
+	uint32_t * pRowIDEnd = dRowIDs.end();
+	int64_t * pValue = dValues.begin();
+	while ( pRowID<pRowIDEnd )
+	{
+		DoAdvance ( *pRowID++ );
+		*pValue++ = DoGet();
+	}
+}
 
 template<typename T>
-uint32_t Iterator_INT_T<T>::AdvanceTo ( uint32_t tRowID )
+uint32_t Iterator_INT_T<T>::DoAdvance ( uint32_t tRowID )
 {
+	assert ( tRowID < BASE::m_tHeader.GetNumDocs() );
+
 	uint32_t uBlockId = RowId2BlockId(tRowID);
 	if ( uBlockId!=BASE::m_uBlockId )
 		BASE::SetCurBlock(uBlockId);
@@ -350,7 +433,7 @@ uint32_t Iterator_INT_T<T>::AdvanceTo ( uint32_t tRowID )
 }
 
 template<typename T>
-int64_t Iterator_INT_T<T>::Get()
+int64_t Iterator_INT_T<T>::DoGet()
 {
 	assert ( BASE::m_fnReadValue );
 	return (*this.*BASE::m_fnReadValue)();
@@ -479,7 +562,8 @@ int AnalyzerBlock_Int_Table_c::ProcessSubblock_SingleValue ( uint32_t * & pRowID
 	// FIXME! use SSE here
 	if ( !EQ && m_iTableValueId==-1 ) // accept all values
 	{
-		for ( auto i : dValueIndexes )
+		uint32_t * pRowIDMax = pRowID + dValueIndexes.size();
+		while ( pRowID < pRowIDMax )
 			*pRowID++ = tRowID++;
 
 		return (int)dValueIndexes.size();
@@ -507,7 +591,8 @@ int AnalyzerBlock_Int_Table_c::ProcessSubblock_ValuesLinear ( uint32_t * & pRowI
 	// FIXME! use SSE here
 	if ( !EQ && m_dTableValues.empty() ) // accept all values
 	{
-		for ( auto i : dValueIndexes )
+		uint32_t * pRowIDMax = pRowID + dValueIndexes.size();
+		while ( pRowID < pRowIDMax )
 			*pRowID++ = tRowID++;
 
 		return (int)dValueIndexes.size();
@@ -553,7 +638,8 @@ int AnalyzerBlock_Int_Table_c::ProcessSubblock_ValuesBinary ( uint32_t * & pRowI
 	// FIXME! use SSE here
 	if ( !EQ && m_dTableValues.empty() ) // accept all values
 	{
-		for ( auto i : dValueIndexes )
+		uint32_t * pRowIDMax = pRowID + dValueIndexes.size();
+		while ( pRowID < pRowIDMax )
 			*pRowID++ = tRowID++;
 
 		return (int)dValueIndexes.size();
@@ -1158,6 +1244,39 @@ Analyzer_i * CreateAnalyzerInt ( const AttributeHeader_i & tHeader, FileReader_c
 	default:	return nullptr;
 	}
 }
+
+//////////////////////////////////////////////////////////////////////////
+
+class Checker_Int_c : public Checker_c
+{
+	using BASE = Checker_c;
+	using BASE::BASE;
+
+private:
+	bool	CheckBlockHeader ( uint32_t uBlockId ) override;
+};
+
+
+bool Checker_Int_c::CheckBlockHeader ( uint32_t uBlockId )
+{
+	uint32_t uPacking = m_pReader->Unpack_uint32();
+	if ( uPacking!=(uint32_t)IntPacking_e::CONST && uPacking!=(uint32_t)IntPacking_e::TABLE && uPacking!=(uint32_t)IntPacking_e::DELTA && uPacking!=(uint32_t)IntPacking_e::GENERIC )
+	{
+		m_fnError ( FormatStr ( "Unknown encoding of block %u: %u", uBlockId, uPacking ).c_str() );
+		return false;
+	}
+
+	// fixme: add block data checks once encodings are finalized
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+Checker_i * CreateCheckerInt ( const AttributeHeader_i & tHeader, FileReader_c * pReader, Reporter_fn & fnProgress, Reporter_fn & fnError )
+{
+	return new Checker_Int_c ( tHeader, pReader, fnProgress, fnError );
+}
+
 
 } // namespace columnar
 

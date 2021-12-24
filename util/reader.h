@@ -14,11 +14,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _reader_
-#define _reader_
+#pragma once
 
 #include "util.h"
-#include "assert.h"
+#include <cassert>
 
 namespace columnar
 {
@@ -35,6 +34,8 @@ public:
 
 	int64_t					GetPos() const { return m_iFilePos+m_tPtr; }
 	int						GetFD() const { return m_iFD; }
+
+	int64_t					GetFileSize();
 
 	void					Read ( uint8_t * pData, size_t tLen );
 
@@ -82,7 +83,7 @@ public:
 	}
 
 private:
-	static const size_t DEFAULT_SIZE = 1048576;
+	static const size_t DEFAULT_SIZE = 65536;
 
 	int         m_iFD = -1;
 	bool        m_bOpened = false;
@@ -130,5 +131,3 @@ private:
 };
 
 } // namespace columnar
-
-#endif // reader

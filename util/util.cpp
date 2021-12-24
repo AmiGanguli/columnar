@@ -27,16 +27,6 @@
 
 namespace columnar
 {
-static Malloc_fn g_fnMalloc = nullptr;
-static Free_fn g_fnFree  = nullptr;
-
-
-void SetupAlloc ( columnar::Malloc_fn fnMalloc, columnar::Free_fn fnFree )
-{
-	columnar::g_fnMalloc = fnMalloc;
-	columnar::g_fnFree = fnFree;
-}
-
 
 int CalcNumBits ( uint64_t uNumber )
 {
@@ -254,45 +244,3 @@ void MemWriter_c::Write ( const uint8_t * pData, size_t tSize )
 }
 
 } // namespace columnar
-
-#ifdef _MSC_VER
-void * operator new ( size_t tSize )
-{
-	// VS performs static initialization (in release) before we can setup our allocation funcs
-	if ( !columnar::g_fnMalloc )
-		return malloc(tSize);
-
-	void * pRes = columnar::g_fnMalloc(tSize);
-	if ( !pRes )
-		throw std::runtime_error("memory allocation error");
-
-	return pRes;
-}
-
-
-void * operator new [] ( size_t tSize )
-{
-	if ( !columnar::g_fnMalloc )
-		throw std::runtime_error("memory allocation error");
-
-	void * pRes = columnar::g_fnMalloc(tSize);
-	if ( !pRes )
-		throw std::runtime_error("memory allocation error");
-
-	return pRes;
-}
-
-
-void operator delete ( void * pPtr ) throw()
-{
-	if ( pPtr )
-		columnar::g_fnFree(pPtr);
-}
-
-
-void operator delete [] ( void * pPtr ) throw()
-{
-	if ( pPtr )
-		columnar::g_fnFree(pPtr);
-}
-#endif

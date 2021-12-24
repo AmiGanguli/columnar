@@ -14,15 +14,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _builder_
-#define _builder_
+#pragma once
 
 #include "columnar.h"
 
 namespace columnar
 {
 
-static const uint32_t STORAGE_VERSION = 5;
+static const uint32_t STORAGE_VERSION = 7;
 
 struct SchemaAttr_t
 {
@@ -50,5 +49,3 @@ extern "C"
 {
 	DLLEXPORT columnar::Builder_i * CreateColumnarBuilder ( const columnar::Settings_t & tSettings, const columnar::Schema_t & tSchema, const std::string & sFile, std::string & sError );
 }
-
-#endif // _builder_

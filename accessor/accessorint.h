@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _accessorint_
-#define _accessorint_
+#pragma once
 
 #include "builder.h"
 
@@ -24,13 +23,15 @@ namespace columnar
 
 class Iterator_i;
 class Analyzer_i;
+class Checker_i;
 class AttributeHeader_i;
 struct Filter_t;
 
-Iterator_i * CreateIteratorUint32 ( const AttributeHeader_i & tHeader, FileReader_c * pReader );
-Iterator_i * CreateIteratorUint64 ( const AttributeHeader_i & tHeader, FileReader_c * pReader );
-Analyzer_i * CreateAnalyzerInt ( const AttributeHeader_i & tHeader, FileReader_c * pReader, const Filter_t & tSettings );
+Iterator_i *	CreateIteratorUint32 ( const AttributeHeader_i & tHeader, FileReader_c * pReader );
+Iterator_i *	CreateIteratorUint64 ( const AttributeHeader_i & tHeader, FileReader_c * pReader );
+
+Analyzer_i *	CreateAnalyzerInt ( const AttributeHeader_i & tHeader, FileReader_c * pReader, const Filter_t & tSettings );
+
+Checker_i *		CreateCheckerInt ( const AttributeHeader_i & tHeader, FileReader_c * pReader, Reporter_fn & fnProgress, Reporter_fn & fnError );
 
 } // namespace columnar
-
-#endif // _accessorint_

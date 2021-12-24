@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _accessorstr_
-#define _accessorstr_
+#pragma once
 
 #include "buildertraits.h"
 
@@ -24,12 +23,11 @@ namespace columnar
 
 class Iterator_i;
 class Analyzer_i;
+class Checker_i;
 class AttributeHeader_i;
-struct IteratorHints_t;
 
-Iterator_i * CreateIteratorStr ( const AttributeHeader_i & tHeader, FileReader_c * pReader, const IteratorHints_t & tHints );
-Analyzer_i * CreateAnalyzerStr ( const AttributeHeader_i & tHeader, FileReader_c * pReader, const Filter_t & tSettings, bool bHaveMatchingBlocks );
+Iterator_i *	CreateIteratorStr ( const AttributeHeader_i & tHeader, FileReader_c * pReader );
+Analyzer_i *	CreateAnalyzerStr ( const AttributeHeader_i & tHeader, FileReader_c * pReader, const Filter_t & tSettings, bool bHaveMatchingBlocks );
+Checker_i *		CreateCheckerStr ( const AttributeHeader_i & tHeader, FileReader_c * pReader, Reporter_fn & fnProgress, Reporter_fn & fnError );
 
 } // namespace columnar
-
-#endif // _accessorstr_

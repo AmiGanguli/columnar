@@ -14,11 +14,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _util_
-#define _util_
+#pragma once
 
-#include <stdint.h>
-#include <string.h>
+#include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 #include <array>
@@ -26,8 +25,6 @@
 #include <type_traits>
 #include <fcntl.h>
 #include <climits>
-
-#include "config.h"
 
 namespace columnar
 {
@@ -40,19 +37,23 @@ namespace columnar
 #endif
 
 #ifndef FORCE_INLINE
-#  ifdef _MSC_VER
-#    define FORCE_INLINE __forceinline
-#  else
-#    if defined (__cplusplus) || defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* C99 */
-#      ifdef __GNUC__
-#        define FORCE_INLINE inline __attribute__((always_inline))
-#      else
-#        define FORCE_INLINE inline
-#      endif
-#    else
-#      define FORCE_INLINE
-#    endif
-#  endif
+	#ifndef NDEBUG
+		#define FORCE_INLINE inline
+	#else
+		#ifdef _MSC_VER
+			#define FORCE_INLINE __forceinline
+		#else
+			#if defined (__cplusplus) || defined (__STDC_VERSION__) && __STDC_VERSION__ >= 199901L   /* C99 */
+				#ifdef __GNUC__
+					#define FORCE_INLINE inline __attribute__((always_inline))
+				#else
+					#define FORCE_INLINE inline
+				#endif
+			#else
+				#define FORCE_INLINE
+			#endif
+		#endif
+	#endif
 #endif
 
 
@@ -228,6 +229,7 @@ public:
 	void        SeekAndWrite ( int64_t iOffset, uint64_t uValue );
 	void        Write_string ( const std::string & sStr );
 	void        Write_uint8 ( uint8_t uValue )      { Write ( (uint8_t*)&uValue, sizeof(uValue) ); }
+	void        Write_uint16 ( uint16_t uValue )    { Write ( (uint8_t*)&uValue, sizeof(uValue) ); }
 	void        Write_uint32 ( uint32_t uValue )    { Write ( (uint8_t*)&uValue, sizeof(uValue) ); }
 	void        Write_uint64 ( uint64_t uValue )    { Write ( (uint8_t*)&uValue, sizeof(uValue) ); }
 
@@ -276,6 +278,7 @@ public:
 	int64_t GetPos() const { return (int64_t)m_dData.size(); }
 
 	void    Write_uint8 ( uint8_t uValue ) { m_dData.push_back(uValue); }
+	void    Write_uint16 ( uint16_t uValue ) { WriteValue(uValue); }
 	void    Write_uint32 ( uint64_t uValue ) { WriteValue(uValue); }
 	void    Write_uint64 ( uint64_t uValue ) { WriteValue(uValue); }
 
@@ -334,7 +337,7 @@ const T * binary_search ( const CONTAINER & dValues, const T & tValue )
 	auto tFirst = dValues.begin();
 	auto tLast = dValues.end();
 	auto tFound = std::lower_bound ( tFirst, tLast, tValue );
-	if ( tFound==tLast || tValue < *tFirst )
+	if ( tFound==tLast || tValue < *tFound )
 		return nullptr;
 
 	return &(*tFound);
@@ -358,21 +361,7 @@ inline float to_type<float> ( int64_t iValue )
 	return UintToFloat ( (uint32_t)iValue );
 }
 
-using Malloc_fn = void * (*)(size_t);
-using Free_fn = void (*)(void *);
-
-void    SetupAlloc ( columnar::Malloc_fn fnMalloc, columnar::Free_fn fnFree );
 int     CalcNumBits ( uint64_t uNumber );
 bool    CopySingleFile ( const std::string & sSource, const std::string & sDest, std::string & sError, int iMode );
 
 } // namespace columnar
-
-
-#ifdef _MSC_VER
-void *	operator new ( size_t iSize );
-void *	operator new [] ( size_t iSize );
-void	operator delete ( void * pPtr ) throw();
-void	operator delete [] ( void * pPtr ) throw();
-#endif
-
-#endif // util

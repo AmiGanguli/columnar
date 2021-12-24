@@ -19,6 +19,7 @@
 #include "builderbool.h"
 
 #include "columnar.h"
+#include "check.h"
 #include "interval.h"
 #include "reader.h"
 #include <algorithm>
@@ -58,7 +59,7 @@ private:
 
 StoredBlock_Bool_Bitmap_c::StoredBlock_Bool_Bitmap_c ( int iSubblockSize )
 {
-	assert ( iSubblockSize==128 );
+	assert ( !( iSubblockSize & 127 ) );
 	m_dValues.resize(iSubblockSize);
 	m_dEncoded.resize ( iSubblockSize >> 5 );
 }
@@ -81,7 +82,7 @@ void StoredBlock_Bool_Bitmap_c::ReadSubblock ( int iSubblockId, int iNumValues, 
 	size_t uPackedSize = m_dEncoded.size()*sizeof ( m_dEncoded[0] );
 	tReader.Seek ( m_iValuesOffset + uPackedSize*iSubblockId );
 	tReader.Read ( (uint8_t*)m_dEncoded.data(), uPackedSize );
-	BitUnpack128 ( m_dEncoded, m_dValues, 1 );
+	BitUnpack ( m_dEncoded, m_dValues, 1 );
 
 	m_tValuesRead = { m_dValues.data(), (size_t)iNumValues };
 }
@@ -178,21 +179,25 @@ class Iterator_Bool_c : public Iterator_i, public Accessor_Bool_c
 	using BASE::Accessor_Bool_c;
 
 public:
-	uint32_t	AdvanceTo ( uint32_t tRowID ) final;
+	uint32_t	AdvanceTo ( uint32_t tRowID ) final		{ return DoAdvance(tRowID); }
+	int64_t		Get() final								{ return DoGet(); }
 
-	int64_t		Get() final;
+	void		Fetch ( const Span_T<uint32_t> & dRowIDs, Span_T<int64_t> & dValues ) final;
 
 	int			Get ( const uint8_t * & pData ) final	{ assert ( 0 && "INTERNAL ERROR: requesting blob from bool iterator" ); return 0; }
 	uint8_t *	GetPacked() final						{ assert ( 0 && "INTERNAL ERROR: requesting blob from bool iterator" ); return nullptr; }
 	int			GetLength() final						{ assert ( 0 && "INTERNAL ERROR: requesting string length from bool iterator" ); return 0; }
 
-	uint64_t	GetStringHash() final					{ return 0; }
-	bool		HaveStringHashes() const final			{ return false; }
+private:
+	FORCE_INLINE uint32_t	DoAdvance ( uint32_t tRowID );
+	FORCE_INLINE int64_t	DoGet();
 };
 
 
-uint32_t Iterator_Bool_c::AdvanceTo ( uint32_t tRowID )
+uint32_t Iterator_Bool_c::DoAdvance ( uint32_t tRowID )
 {
+	assert ( tRowID < BASE::m_tHeader.GetNumDocs() );
+
 	uint32_t uBlockId = RowId2BlockId(tRowID);
 	if ( uBlockId!=BASE::m_uBlockId )
 		BASE::SetCurBlock(uBlockId);
@@ -203,7 +208,20 @@ uint32_t Iterator_Bool_c::AdvanceTo ( uint32_t tRowID )
 }
 
 
-int64_t Iterator_Bool_c::Get()
+void Iterator_Bool_c::Fetch ( const Span_T<uint32_t> & dRowIDs, Span_T<int64_t> & dValues )
+{
+	uint32_t * pRowID = dRowIDs.begin();
+	uint32_t * pRowIDEnd = dRowIDs.end();
+	int64_t * pValue = dValues.begin();
+	while ( pRowID<pRowIDEnd )
+	{
+		DoAdvance ( *pRowID++ );
+		*pValue++ = DoGet();
+	}
+}
+
+
+int64_t Iterator_Bool_c::DoGet()
 {
 	assert ( BASE::m_fnReadValue );
 	return (*this.*BASE::m_fnReadValue)();
@@ -450,6 +468,37 @@ Analyzer_i * CreateAnalyzerBool ( const AttributeHeader_i & tHeader, FileReader_
 		return new Analyzer_Bool_T<true> ( tHeader, pReader, tSettings );
 	else
 		return new Analyzer_Bool_T<false> ( tHeader, pReader, tSettings );
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+class Checker_Bool_c : public Checker_c
+{
+	using BASE=Checker_c;
+	using BASE::BASE;
+
+private:
+	bool	CheckBlockHeader ( uint32_t uBlockId ) override;
+};
+
+
+bool Checker_Bool_c::CheckBlockHeader ( uint32_t uBlockId )
+{
+	uint32_t uPacking = m_pReader->Unpack_uint32();
+	if ( uPacking!=(uint32_t)BoolPacking_e::CONST && uPacking!=(uint32_t)BoolPacking_e::BITMAP )
+	{
+		m_fnError ( FormatStr ( "Unknown encoding of block %u: %u", uBlockId, uPacking ).c_str() );
+		return false;
+	}
+
+	return true;
+}
+
+//////////////////////////////////////////////////////////////////////////
+
+Checker_i * CreateCheckerBool ( const AttributeHeader_i & tHeader, FileReader_c * pReader, Reporter_fn & fnProgress, Reporter_fn & fnError )
+{
+	return new Checker_Bool_c ( tHeader, pReader, fnProgress, fnError );
 }
 
 } // namespace columnar

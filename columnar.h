@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _columnar_
-#define _columnar_
+#pragma once
 
 #include "util/util.h"
 #include <functional>
@@ -23,7 +22,7 @@
 namespace columnar
 {
 
-static const int LIB_VERSION = 7;
+static const int LIB_VERSION = 12;
 
 class Iterator_i
 {
@@ -34,12 +33,11 @@ public:
 
 	virtual	int64_t		Get() = 0;
 
+	virtual	void		Fetch ( const Span_T<uint32_t> & dRowIDs, Span_T<int64_t> & dValues ) = 0;
+
 	virtual	int			Get ( const uint8_t * & pData ) = 0;
 	virtual	uint8_t *	GetPacked() = 0;
 	virtual	int			GetLength() = 0;
-
-	virtual uint64_t	GetStringHash() = 0;
-	virtual bool		HaveStringHashes() const = 0;
 };
 
 
@@ -68,6 +66,12 @@ public:
 struct IteratorHints_t
 {
 	bool	m_bNeedStringHashes = false;
+};
+
+
+struct IteratorCapabilities_t
+{
+	bool	m_bStringHashes = false;
 };
 
 
@@ -123,34 +127,36 @@ enum class AttrType_e : uint32_t
 	FLOAT,
 	STRING,
 	UINT32SET,
-	INT64SET
+	INT64SET,
+
+	TOTAL
 };
 
+using Reporter_fn = std::function<void (const char*)>;
 class FileReader_c;
 
 struct Settings_t
 {
-	int			m_iSubblockSize = 128;
-	int			m_iSubblockSizeMva = 128;
-	int			m_iMinMaxLeafSize = 128;
-	std::string	m_sCompressionUINT32 = "simdfastpfor128";
+	int			m_iSubblockSize = 1024;
+	std::string	m_sCompressionUINT32 = "streamvbyte";
 	std::string	m_sCompressionUINT64 = "fastpfor128";
 
 	void		Load ( FileReader_c & tReader );
 	void		Save ( FileWriter_c & tWriter );
+	bool		Check ( FileReader_c & tReader, Reporter_fn & fnError );
 };
 
-using GetAttrId_fn = std::function<int(std::string)>;
 
 class Columnar_i
 {
 public:
 	virtual					~Columnar_i() = default;
 
-	virtual Iterator_i *	CreateIterator ( const std::string & sName, const IteratorHints_t & tHints, std::string & sError ) const = 0;
-	virtual std::vector<BlockIterator_i *> CreateAnalyzerOrPrefilter ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, const BlockTester_i & tBlockTester, const GetAttrId_fn & fnGetAttrId ) const = 0;
+	virtual Iterator_i *	CreateIterator ( const std::string & sName, const IteratorHints_t & tHints, columnar::IteratorCapabilities_t * pCapabilities, std::string & sError ) const = 0;
+	virtual std::vector<BlockIterator_i *> CreateAnalyzerOrPrefilter ( const std::vector<Filter_t> & dFilters, std::vector<int> & dDeletedFilters, const BlockTester_i & tBlockTester ) const = 0;
+	virtual int				GetAttributeId ( const std::string & sName ) const = 0;
 
-	virtual bool			EarlyReject ( const std::vector<Filter_t> & dFilters, const BlockTester_i & tBlockTester, const GetAttrId_fn & fnGetAttrId ) const = 0;
+	virtual bool			EarlyReject ( const std::vector<Filter_t> & dFilters, const BlockTester_i & tBlockTester ) const = 0;
 	virtual bool			IsFilterDegenerate ( const Filter_t & tFilter ) const = 0;
 };
 
@@ -160,9 +166,8 @@ public:
 extern "C"
 {
 	DLLEXPORT columnar::Columnar_i *	CreateColumnarStorageReader ( const std::string & sFilename, uint32_t uTotalDocs, std::string & sError );
-	DLLEXPORT void						SetupColumnar ( columnar::Malloc_fn fnMalloc, columnar::Free_fn fnFree );
+	DLLEXPORT void						CheckColumnarStorage ( const std::string & sFilename, uint32_t uNumRows, columnar::Reporter_fn & fnError, columnar::Reporter_fn & fnProgress );
 	DLLEXPORT int						GetColumnarLibVersion();
 	DLLEXPORT const char *				GetColumnarLibVersionStr();
+	DLLEXPORT int						GetColumnarStorageVersion();
 }
-
-#endif // _columnar_

@@ -14,8 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _builderstr_
-#define _builderstr_
+#pragma once
 
 #include "builder.h"
 
@@ -32,11 +31,7 @@ enum class StrPacking_e : uint32_t
 	TOTAL
 };
 
-const uint64_t STR_HASH_SEED = 0xCBF29CE484222325ULL;
-
 class Packer_i;
-Packer_i * CreatePackerStr ( const Settings_t & tSettings, const std::string & sName, StringHash_fn fnHashCalc );
+Packer_i * CreatePackerStr ( const Settings_t & tSettings, const std::string & sName );
 
 } // namespace columnar
-
-#endif // _builderstr_

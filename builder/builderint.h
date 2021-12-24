@@ -14,10 +14,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifndef _builderint_
-#define _builderint_
+#pragma once
 
-#include "util.h"
+#include "columnar.h"
 
 namespace columnar
 {
@@ -35,6 +34,7 @@ enum class IntPacking_e : uint32_t
 	TABLE,
 	DELTA,
 	GENERIC,
+	HASH,
 
 	TOTAL
 };
@@ -45,8 +45,7 @@ struct Settings_t;
 
 Packer_i * CreatePackerUint32 ( const Settings_t & tSettings, const std::string & sName );
 Packer_i * CreatePackerUint64 ( const Settings_t & tSettings, const std::string & sName );
+Packer_i * CreatePackerHash ( const Settings_t & tSettings, const std::string & sName, StringHash_fn fnCalcHash );
 Packer_i * CreatePackerFloat ( const Settings_t & tSettings, const std::string & sName );
 
 } // namespace columnar
-
-#endif // _builderint_
